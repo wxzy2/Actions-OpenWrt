@@ -17,3 +17,5 @@
 # echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >>feeds.conf.default
 
 echo 'src-git small https://github.com/kenzok8/small' >>feeds.conf.default
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup update
