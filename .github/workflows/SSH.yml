@@ -1,0 +1,31 @@
+name: SSH via tmate (3 hours)
+
+on:
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  ssh-tmate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180   # 整个 job 最长运行 3 小时
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup tmate
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true   # 只有触发这个 workflow 的人才能连接（推荐）
+          # detached: true              # 如果不想在日志里直接显示连接信息，可以打开 detached 模式
+
+      # 下面的步骤是为了防止 GitHub Actions 因为 3 小时无日志输出而自动取消任务
+      - name: Keep alive (prevent timeout)
+        run: |
+          echo "=== tmate 会话已启动，以上就是 SSH 和 WebShell 连接信息 ==="
+          echo "会话将保持 3 小时活跃（直到 $(date -d '+=%Y-%m-%d %H:%M:%S' -d '+180 minutes') ）"
+          
+          # 每 5 分钟输出一次日志，防止 GitHub Actions 超时（默认 3 小时无输出会被杀）
+          while true; do
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - 会话仍然活跃中...（剩余 $(( (180 - $(($(date +%s) - $(date -d '${{ github.event.repository.created_at }}' +%s)))) / 60 )) 分钟左右）"
+            sleep 300   # 每 5 分钟打印一次
+          done &
