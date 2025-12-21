@@ -1,4 +1,4 @@
-name: Jd-AX6600 ImmortalWrt
+name: Fast Build AX6600 ImmortalWrt
 
 on:
   repository_dispatch:
@@ -86,7 +86,7 @@ jobs:
         CCACHE_DIR: ~/.ccache
       run: |
         cd openwrt
-        ccache -M 5G  # 加大缓存大小
+        ccache -M 5G
         echo "Using $(nproc) threads to compile (with ccache and dl cache)"
         make -j$(nproc) || make -j1 V=s
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
@@ -136,11 +136,10 @@ jobs:
         retain_days: 1
         keep_minimum_runs: 10
 
-    - name: Remove old releases
-      uses: dev-drprasad/delete-older-releases@v1.1.0
+    - name: Delete old releases
       if: env.UPLOAD_RELEASE == 'true'
+      uses: Nats-ji/delete-old-releases@v1
       with:
-        keep_latest: 20
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+        keep-count: 20          # 保留最新 20 个 Release
+        delete-tags: true       # 同时删除对应的 tag
