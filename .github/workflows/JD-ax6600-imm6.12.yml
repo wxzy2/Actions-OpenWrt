@@ -7,13 +7,9 @@ on:
 env:
   REPO_URL: https://github.com/VIKINGYFY/immortalwrt
   REPO_BRANCH: main
-  FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: config/ax6600-imm6.12.config
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
@@ -24,124 +20,89 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@main
 
-    - name: Setup ccache cache
-      uses: actions/cache@v4
+    - name: Free Disk Space (释放磁盘空间)
+      uses: easimon/maximize-build-space@master
       with:
-        path: ~/.ccache
-        key: ccache-${{ runner.os }}-${{ github.sha }}
-        restore-keys: |
-          ccache-${{ runner.os }}-
+        swap-size-mb: 1024
+        temp-reserve-mb: 100
+        root-reserve-mb: 1024
 
-    - name: Initialization environment
+    - name: Initialization environment (初始化环境)
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib gettext git libncurses5-dev libncursesw5-dev libssl-dev python3 python3-setuptools rsync swig unzip zlib1g-dev file wget ccache ninja-build quilt subversion
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
+        sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+        sudo -E apt-get -y install dos2unix libfuse-dev
         sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
 
     - name: Clone source code
-      working-directory: /workdir
       run: |
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        echo "OPENWRT_PATH=$PWD/openwrt" >> $GITHUB_ENV
 
-    - name: Load custom feeds and files (part1)
+    - name: Load custom feeds (Part 1)
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        [ -e files ] && mv files openwrt/files
-        chmod +x $DIY_P1_SH || true
-        cd openwrt && ../$DIY_P1_SH || true
-
-    - name: Update and install feeds
-      run: |
+        chmod +x $DIY_P1_SH
+        dos2unix $DIY_P1_SH
+        ./$DIY_P1_SH
         cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load custom configuration (part2)
+    - name: Load custom configuration (Part 2)
       run: |
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH || true
+        [ -e files ] && mv files openwrt/files
+        [ -e $CONFIG_FILE ] && cp $CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        dos2unix $DIY_P2_SH
+        
+        # 进入 openwrt 目录执行脚本，确保路径正确
         cd openwrt
-        ../$DIY_P2_SH || true
+        $GITHUB_WORKSPACE/$DIY_P2_SH
+        
+        # 强制禁用在线升级插件 (防止 .config 中 y 的干扰)
+        sed -i 's/CONFIG_PACKAGE_luci-app-attendedsysupgrade=y/# CONFIG_PACKAGE_luci-app-attendedsysupgrade is not set/g' .config
+        
+        # 重新应用配置
         make defconfig
 
     - name: Download packages
       run: |
         cd openwrt
-        make download -j$(nproc)
+        make download -j8
         find dl -size -1024c -exec rm -f {} \;
 
     - name: Compile firmware
-      env:
-        CCACHE_DIR: ~/.ccache
+      id: compile
       run: |
         cd openwrt
-        ccache -M 2G
-        echo "Using $(nproc) threads to compile (with ccache)"
-        make -j$(nproc) || make -j1 V=s || make -j1 V=s
+        echo "Using $(nproc) threads to compile"
+        make -j$(nproc) || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        echo "DEVICE_NAME=_$(cat DEVICE_NAME || echo unknown)" >> $GITHUB_ENV
+        echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Check space usage
-      if: always()
-      run: df -hT
-
-    - name: Upload bin directory (optional)
-      uses: actions/upload-artifact@main
-      if: env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
     - name: Organize firmware files
-      if: env.UPLOAD_FIRMWARE == 'true'
+      if: steps.compile.outputs.status == 'success'
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
+        cp $OPENWRT_PATH/.config build.config
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-
-    - name: Upload firmware artifact
-      uses: actions/upload-artifact@main
-      if: env.UPLOAD_FIRMWARE == 'true'
-      with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
-
-    - name: Generate release tag
-      if: env.UPLOAD_RELEASE == 'true'
-      run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        touch release.txt
 
     - name: Upload firmware to release
       uses: softprops/action-gh-release@master
-      if: env.UPLOAD_RELEASE == 'true'
+      if: steps.compile.outputs.status == 'success'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ steps.generate_release_tag.outputs.release_tag }}
-        name: jdax6600-imm6.12-hp-hikki
-        body_path: release.txt
+        tag_name: ${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: jdax6600-imm6.12-Release
+        body: |
+          ### 固件信息
+          - 默认地址: 10.1.1.1
+          - 默认密码: password
+          - 已移除: 在线升级、测速插件
+          - 已修复: 雅典娜 LED 驱动
         files: ${{ env.FIRMWARE }}/*
-
-    - name: Delete old workflow runs
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 0
-        keep_minimum_runs: 20
-
-    - name: Remove old releases
-      uses: dev-drprasad/delete-older-releases@master
-      if: env.UPLOAD_RELEASE == 'true'
-      with:
-        keep_latest: 30
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
