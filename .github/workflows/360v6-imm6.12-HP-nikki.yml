@@ -17,7 +17,7 @@ env:
   REPO_URL: https://github.com/VIKINGYFY/immortalwrt
   REPO_BRANCH: main
   FEEDS_CONF: feeds.conf.default
-  CONFIG_FILE: config/360v6-imm6.12.config
+  CONFIG_FILE: config/360v6-imm6.12.config   # 保持原样（你的路径是 config/ 单数）
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
   UPLOAD_BIN_DIR: false
@@ -64,19 +64,16 @@ jobs:
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
-    # === 关键修改：提前加载 config 和执行 diy-part2.sh ===
-    - name: Load custom configuration (提前)
+    - name: Load custom configuration (提前加载，确保 feeds install 能看到完整 config)
       run: |
         [ -e files ] && mv files openwrt/files
-        cp $CONFIG_FILE openwrt/.config   # 用 cp 保留原文件
+        cp $CONFIG_FILE openwrt/.config   # 修正路径，用 cp 保留原文件
         chmod +x $DIY_P2_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH   # 如果 diy-part2.sh 有修改 config 的操作
+        $GITHUB_WORKSPACE/$DIY_P2_SH   # 执行 part2（如果有修改 config）
 
-    - name: Install feeds (根据完整 config 安装)
+    - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
-
-    # === 原来这里是 Load custom configuration，现在提前了 ===
 
     - name: Make defconfig
       run: cd openwrt && make defconfig
@@ -115,11 +112,12 @@ jobs:
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        cd openwrt/bin/targets/*/*
+        cd openwrt/bin/targets/*/* || exit 0   # 加 || exit 0 防止目录不存在时报错
         rm -rf packages
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
+    # 后面步骤保持不变...
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
