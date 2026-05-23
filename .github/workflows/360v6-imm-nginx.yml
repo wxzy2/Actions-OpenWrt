@@ -4,83 +4,133 @@ on:
   repository_dispatch:
     types: [build]
   workflow_dispatch:
+    inputs:
+      release:
+        description: '发布到 Release'
+        required: false
+        default: 'true'
+        type: choice
+        options: ['true', 'false']
 
 env:
-  REPO_URL: https://github.com/VIKINGYFY/immortalwrt
+  REPO_URL:    https://github.com/VIKINGYFY/immortalwrt
   REPO_BRANCH: main
   CONFIG_FILE: config/imm-nginx.config
-  DIY_SH: diy.sh
-  TZ: Asia/Shanghai
+  DIY_SH:      diy.sh
+  TZ:          Asia/Shanghai
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
+
+    # ── 1. 检出仓库 ──────────────────────────────────────────────────────────
     - name: Checkout
       uses: actions/checkout@v4
 
+    # ── 2. 释放磁盘空间（防止编译中途爆盘）────────────────────────────────────
+    - name: Free disk space
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache:    false
+        android:       true
+        dotnet:        true
+        haskell:       true
+        large-packages: true
+        docker-images: true
+        swap-storage:  true
+
+    # ── 3. 初始化编译环境 ─────────────────────────────────────────────────────
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
+        sudo rm -rf /etc/apt/sources.list.d/* \
+          /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/share/swift
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xz-utils zlib1g-dev libz-dev
+        sudo -E apt-get -qq install -y \
+          ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+          build-essential bzip2 ccache cmake cpio curl device-tree-compiler \
+          fastjar flex gawk gettext gcc-multilib g++-multilib git gperf \
+          haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev \
+          libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev \
+          libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs \
+          msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip \
+          qemu-utils rsync scons squashfs-tools subversion swig texinfo \
+          u-boot-tools upx-ucl unzip xz-utils zlib1g-dev libz-dev
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
         sudo mkdir -p /workdir
-        sudo chown $USER:$USER /workdir
+        sudo chown $USER:$GROUPS /workdir   # $GROUPS 比 $USER:$USER 更可靠
 
+    # ── 4. 克隆源码 ───────────────────────────────────────────────────────────
     - name: Clone source code
       working-directory: /workdir
       run: |
         df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
+        git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom configuration & Feeds
+    # ── 5. 运行 diy.sh（修改 feeds.conf / 写入自定义源）──────────────────────
+    - name: Run diy.sh
+      run: |
+        chmod +x $DIY_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_SH
+
+    # ── 6. 更新并安装 feeds ───────────────────────────────────────────────────
+    - name: Update & install feeds
       run: |
         cd openwrt
-        # 1. 运行自定义脚本 diy.sh
-        chmod +x ../$DIY_SH
-        ../$DIY_SH
-        
-        # 2. 更新并安装 Feeds 源
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-        # 3. 💥【双重强力驱魔命令】彻底抹除不想要的 attendedsysupgrade 插件
-        # 第一重：强行从 LuCI 核心集合的 Makefile 中删掉该插件的强制依赖
-        sed -i '/attendedsysupgrade/d' $(find ./feeds/luci/collections/ -type f -name "Makefile")
-        
-        # 第二重：直接物理删除该插件的源码目录，斩草除根
+    # ── 7. 清除不需要的插件（attendedsysupgrade 等）──────────────────────────
+    - name: Remove unwanted packages
+      run: |
+        cd openwrt
+        # 从 luci 集合 Makefile 中删除强制依赖
+        find ./feeds/luci/collections/ -type f -name "Makefile" \
+          -exec sed -i '/attendedsysupgrade/d' {} +
+        # 物理删除插件目录
         rm -rf ./feeds/luci/applications/luci-app-attendedsysupgrade
         rm -rf package/feeds/luci/luci-app-attendedsysupgrade
 
-    - name: Load Config File
+    # ── 8. 载入 .config ───────────────────────────────────────────────────────
+    - name: Load .config
       run: |
-        # 载入自定义的配置文件
-        [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
-
-    - name: Download package
-      id: package
-      run: |
+        cp $GITHUB_WORKSPACE/$CONFIG_FILE openwrt/.config
         cd openwrt
         make defconfig
-        make download -j$(nproc)
-        find package -name "dl" -get -delete
 
-    - name: Compile the firmware
+    # ── 9. 下载编译依赖包 ─────────────────────────────────────────────────────
+    - name: Download packages
+      id: download
+      run: |
+        cd openwrt
+        make download -j$(nproc)
+        # 删除下载不完整的文件（小于 1KB）
+        find dl -size -1024c -exec ls -l {} \;
+        find dl -size -1024c -exec rm -f {} \;
+
+    # ── 10. 编译固件 ──────────────────────────────────────────────────────────
+    - name: Compile firmware
       id: compile
       run: |
         cd openwrt
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
+        # 记录设备名与构建时间，供后续步骤使用
+        grep '^CONFIG_TARGET.*DEVICE.*=y' .config \
+          | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
+        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "BUILD_DATE=$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
 
-    - name: Organize files
+    # ── 11. 整理固件目录 ──────────────────────────────────────────────────────
+    - name: Organize firmware files
       id: organize
       if: steps.compile.outputs.status == 'success'
       run: |
@@ -89,9 +139,49 @@ jobs:
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware directory
+    # ── 12. 上传到 Artifacts ──────────────────────────────────────────────────
+    - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
       if: steps.organize.outputs.status == 'success'
       with:
-        name: ImmortalWrt_firmware
+        name: ImmortalWrt_${{ env.DEVICE_NAME }}_${{ env.BUILD_DATE }}
         path: ${{ env.FIRMWARE }}
+
+    # ── 13. 发布到 Release ────────────────────────────────────────────────────
+    - name: Generate release notes
+      id: release_notes
+      if: >
+        steps.organize.outputs.status == 'success' &&
+        github.event.inputs.release != 'false'
+      run: |
+        cat > release.md << RELEASE
+        ### ImmortalWrt — ${{ env.DEVICE_NAME }}
+        
+        | 项目 | 内容 |
+        |---|---|
+        | 源码 | VIKINGYFY/immortalwrt @ \`main\` |
+        | 构建时间 | $(date +'%Y-%m-%d %H:%M %Z') |
+        | 默认 IP | 10.1.1.1 |
+        RELEASE
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Publish to GitHub Release
+      uses: softprops/action-gh-release@master
+      if: steps.release_notes.outputs.status == 'success'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ env.BUILD_DATE }}
+        name: ImmortalWrt ${{ env.DEVICE_NAME }} ${{ env.BUILD_DATE }}
+        body_path: release.md
+        files: ${{ env.FIRMWARE }}/*
+
+    # ── 14. 清理旧 Release（保留最近 5 个）────────────────────────────────────
+    - name: Delete old releases
+      uses: dev-drprasad/delete-older-releases@master
+      if: steps.release_notes.outputs.status == 'success'
+      with:
+        keep_latest: 5
+        delete_tags:  true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
