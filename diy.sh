@@ -13,5 +13,4 @@ echo "src-git ddnsgo https://github.com/sirpdboy/luci-app-ddns-go.git;main" >> f
 echo "src-git openclash https://github.com/vernesong/OpenClash.git;master" >> feeds.conf.default
 
 # 5. 注入常用精选插件集合源 (包含 passwall, aria2, smartdns 等)
-echo "src-git modern_apps https://github.com/fw876/helloworld.git;master" >> feeds.conf.default
 echo "src-git small8 https://github.com/kenzok8/small-package.git;main" >> feeds.conf.default
