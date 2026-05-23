@@ -8,7 +8,7 @@ on:
 env:
   REPO_URL: https://github.com/VIKINGYFY/immortalwrt
   REPO_BRANCH: main
-  CONFIG_FILE: config/360v6-imm-nginx.config
+  CONFIG_FILE: config/imm-nginx.config
   DIY_SH: diy.sh
   TZ: Asia/Shanghai
 
