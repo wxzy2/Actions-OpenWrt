@@ -1,11 +1,8 @@
-name: Build Modern OpenWrt
+name: Build & Release Modern OpenWrt
 
 on:
   repository_dispatch:
   workflow_dispatch:
-  # push:
-  #   branches:
-    #   - main
 
 env:
   REPO_URL: https://github.com/VIKINGYFY/immortalwrt
@@ -19,7 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: [360v6, ax6600] # 矩阵定义两个机型
+        device: [360v6, ax6600]
+
+    outputs:
+      release_tag: ${{ steps.tag.outputs.release_tag }}
 
     steps:
     - name: Checkout
@@ -38,14 +38,12 @@ jobs:
 
     - name: Clone source code
       run: |
-        df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
         echo "ROOT_DIR=$PWD" >> $GITHUB_ENV
 
-    - name: Load Custom Feeds & Packages (Run Shared Script)
+    - name: Load Custom Feeds & Packages
       run: |
-        # 赋予脚本执行权限并运行，传入当前机型参数
         chmod +x scripts/diy-script.sh
         cd openwrt
         ../scripts/diy-script.sh ${{ matrix.device }}
@@ -58,7 +56,6 @@ jobs:
 
     - name: Load Custom Configuration
       run: |
-        # 根据矩阵名称，将对应的 .config 复制到编译目录
         if [ -f configs/${{ matrix.device }}.config ]; then
           cp configs/${{ matrix.device }}.config openwrt/.config
         else
@@ -83,13 +80,65 @@ jobs:
         make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
-
-    - name: Upload firmware directory
-      uses: actions/upload-artifact@v4
+    - name: Generate Release Tag
+      id: tag
       if: steps.compile.outputs.status == 'success'
+      run: |
+        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Organize files
+      id: organize
+      if: steps.compile.outputs.status == 'success'
+      run: |
+        mkdir -p firmware_release
+        # 提取编译好的固件并规范命名
+        find openwrt/bin/targets/ -type f -name "*sysupgrade.bin" -o -name "*factory.bin" -o -name "*initramfs-kernel.bin" | while read -r file; do
+          filename=$(basename "$file")
+          cp "$file" "firmware_release/${{ matrix.device }}-$filename"
+        done
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware to Artifacts
+      uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.status == 'success'
       with:
         name: OpenWrt_firmware_${{ matrix.device }}
-        path: openwrt/bin/targets/
+        path: firmware_release/*
+
+  release:
+    runs-on: ubuntu-24.04
+    needs: build
+    if: needs.build.outputs.release_tag != ''
+    permissions:
+      contents: write # 关键：赋予 Actions 写入 Release 的权限
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./downloaded_artifacts
+
+    - name: Flatten Artifacts Directory
+      run: |
+        mkdir -p release_assets
+        find ./downloaded_artifacts -type f -exec cp {} ./release_assets/ \;
+        echo "==== 准备上传的固件列表 ===="
+        ls -lh ./release_assets/
+
+    - name: Upload to GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ needs.build.outputs.release_tag }}
+        name: OpenWrt 定制固件发布 [${{ needs.build.outputs.release_tag }}]
+        body: |
+          ## 🤖 自动化编译成功！
+          基于官方分支定制的现代化 OpenWrt 固件。
+          
+          ### 📌 固件信息
+          * **默认管理 IP**: `10.1.1.1`
+          * **编译时间**: ${{ needs.build.outputs.release_tag }}
+          * **包含的核心插件**: OpenClash, HomeProxy, DDNS-Go, Aria2, Aurora 极光主题等。
+          * **内置特殊驱动**: 京东云雅典娜（LED屏幕控制）。
+        draft: false
+        prerelease: false
+        files: ./release_assets/*
