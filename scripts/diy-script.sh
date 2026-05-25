@@ -13,11 +13,11 @@ sed -i 's/192.168.1.1/10.1.1.1/g' package/base-files/files/bin/config_generate
 rm -rf feeds/luci/applications/luci-app-attendedsysupgrade
 rm -rf package/feeds/luci/luci-app-attendedsysupgrade
 
-# 3. 添加第三方插件仓库 (放置到 package/custom 目录下)
+# 3. 添加第三方公共插件仓库 (放置到 package/custom 目录下)
 mkdir -p package/custom
 cd package/custom
 
-# ddns-go (sirpdboy 核心作品)
+# ddns-go
 git clone --depth=1 https://github.com/sirpdboy/luci-app-ddns-go.git
 
 # OpenClash (先彻底清理自带 feeds 目录以防同名冲突)
