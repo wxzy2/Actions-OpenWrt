@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: [360v6, athena]
+        device: [360v6, ax6600]
 
     outputs:
       release_tag: ${{ steps.tag.outputs.release_tag }}
