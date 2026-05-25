@@ -42,6 +42,17 @@ jobs:
         cd openwrt
         echo "ROOT_DIR=$PWD" >> $GITHUB_ENV
 
+    # ================= ⚡ 核心加速：开启 Ccache 缓存 ⚡ =================
+    - name: Cache Build Objects
+      uses: actions/cache@v4
+      with:
+        path: |
+          openwrt/dl
+          openwrt/.ccache
+        key: ${{ runner.os }}-openwrt-${{ matrix.device }}-${{ hashFiles('configs/', 'scripts/') }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-${{ matrix.device }}-
+
     - name: Load Custom Feeds & Packages
       run: |
         chmod +x scripts/diy-script.sh
@@ -62,6 +73,9 @@ jobs:
           echo "Error: configs/${{ matrix.device }}.config not found!" && exit 1
         fi
         cd openwrt
+        # 配置 ccache 环境变量以利用缓存
+        echo "CONFIG_CCACHE=y" >> .config
+        echo "CONFIG_CCACHE_DIR=\"$PWD/.ccache\"" >> .config
         make defconfig
 
     - name: Download package
@@ -92,12 +106,10 @@ jobs:
       if: steps.compile.outputs.status == 'success'
       run: |
         mkdir -p firmware_release
-        # 1. 复制编译生成的固件
         find openwrt/bin/targets/ -type f -name "*sysupgrade.bin" -o -name "*factory.bin" -o -name "*initramfs-kernel.bin" | while read -r file; do
           filename=$(basename "$file")
           cp "$file" "firmware_release/${{ matrix.device }}-$filename"
         done
-        # 2. 复制本次编译最终生效的 .config 配置文件
         if [ -f openwrt/.config ]; then
           cp openwrt/.config "firmware_release/${{ matrix.device }}.config"
         fi
@@ -132,20 +144,13 @@ jobs:
     - name: Dynamic Generate Release Body
       id: dynamic_body
       run: |
-        # 动态构建不同机型的介绍文案
         BODY_TXT="## 🤖 自动化编译成功！\n基于官方分支定制的现代化 OpenWrt 固件。\n\n### 📌 共同固件信息\n* **默认管理 IP**: \`10.1.1.1\`\n* **编译时间**: ${{ needs.build.outputs.release_tag }}\n\n---\n\n### 📱 机型专属说明\n"
-        
-        # 检查是否存在 360v6 相关文件
         if ls ./release_assets/360v6* >/dev/null 2>&1; then
           BODY_TXT="${BODY_TXT}#### 🟥 360 v6\n* **核心插件**: OpenClash, HomeProxy, DDNS-Go, Aria2, Aurora 极光主题。\n* **特殊说明**: 纯净无线固件，无额外硬件驱动。\n\n"
         fi
-        
-        # 检查是否存在 ax6600 相关文件
         if ls ./release_assets/ax6600* >/dev/null 2>&1; then
           BODY_TXT="${BODY_TXT}#### 🟦 京东云雅典娜 (AX6600)\n* **核心插件**: OpenClash, HomeProxy, DDNS-Go, Aria2, Aurora 极光主题、**luci-app-athena-led**。\n* **内置驱动**: 京东云雅典娜 LED 屏幕控制驱动。\n"
         fi
-
-        # 写入 GitHub 环境变量供下一步调用
         echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
         echo -e "$BODY_TXT" >> $GITHUB_ENV
         echo "EOF" >> $GITHUB_ENV
