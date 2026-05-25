@@ -9,6 +9,11 @@ echo "正在为设备 [ $DEVICE ] 执行自定义批处理步骤..."
 # 1. 修改默认 IP 为 10.1.1.1
 sed -i 's/192.168.1.1/10.1.1.1/g' package/base-files/files/bin/config_generate
 
+# 1.2 修改默认时区为北京时间 (CST-8) 并设置国内 NTP 服务器
+sed -i "s/'UTC'/'CST-8'/g" package/base-files/files/bin/config_generate
+sed -i "s/'0.org.pool.ntp.org'/'ntp.aliyun.com'/g" package/base-files/files/bin/config_generate
+sed -i "s/'1.org.pool.ntp.org'/'time1.cloud.tencent.com'/g" package/base-files/files/bin/config_generate
+
 # 2. 强制删除（拉黑）luci-app-attendedsysupgrade 插件避免编译
 rm -rf feeds/luci/applications/luci-app-attendedsysupgrade
 rm -rf package/feeds/luci/luci-app-attendedsysupgrade
