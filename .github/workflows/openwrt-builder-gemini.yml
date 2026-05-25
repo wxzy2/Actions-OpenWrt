@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: [360v6, ax6600]
+        device: [360v6, athena]
 
     outputs:
       release_tag: ${{ steps.tag.outputs.release_tag }}
@@ -31,7 +31,7 @@ jobs:
       run: |
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup
         sudo -E apt-get -qq update
-        sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xreged xz-utils zlib1g-dev lib32gcc-s1 libc6-dev-i386
+        sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xz-utils zlib1g-dev lib32gcc-s1 libc6-dev-i386
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "${{ env.TZ }}"
@@ -92,7 +92,6 @@ jobs:
       if: steps.compile.outputs.status == 'success'
       run: |
         mkdir -p firmware_release
-        # 提取编译好的固件并规范命名
         find openwrt/bin/targets/ -type f -name "*sysupgrade.bin" -o -name "*factory.bin" -o -name "*initramfs-kernel.bin" | while read -r file; do
           filename=$(basename "$file")
           cp "$file" "firmware_release/${{ matrix.device }}-$filename"
@@ -111,7 +110,7 @@ jobs:
     needs: build
     if: needs.build.outputs.release_tag != ''
     permissions:
-      contents: write # 关键：赋予 Actions 写入 Release 的权限
+      contents: write
     steps:
     - name: Download all artifacts
       uses: actions/download-artifact@v4
