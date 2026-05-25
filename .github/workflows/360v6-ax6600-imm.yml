@@ -1,0 +1,94 @@
+name: Build ImmortalWrt
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '选择编译机型'
+        required: true
+        type: choice
+        options:
+          - 360v6
+          - ax6600
+          - all
+
+env:
+  REPO_URL:    https://github.com/VIKINGYFY/immortalwrt
+  REPO_BRANCH: main
+  TZ:          Asia/Shanghai
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # 消除 Node20 警告
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        device: ${{ inputs.target == 'all' && fromJson('["360v6","ax6600"]') || fromJson(format('["{0}"]', inputs.target)) }}
+
+    steps:
+      - name: 释放磁盘空间
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          large-packages: true
+          docker-images: false
+
+      - name: 初始化环境
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk gettext \
+            git libncurses-dev libssl-dev python3-distutils \
+            rsync unzip zlib1g-dev wget curl
+          sudo timedatectl set-timezone "$TZ"
+
+      - name: 检出本仓库
+        uses: actions/checkout@v4
+
+      - name: 克隆源码
+        run: git clone --depth=1 -b $REPO_BRANCH $REPO_URL openwrt
+
+      - name: 缓存工具链和下载目录（大幅提速）
+        uses: actions/cache@v4
+        with:
+          path: |
+            openwrt/.ccache
+            openwrt/staging_dir
+            openwrt/dl
+          key: ${{ matrix.device }}-fullcache-${{ hashFiles(format('configs/{0}.config', matrix.device)) }}
+          restore-keys: |
+            ${{ matrix.device }}-fullcache-
+
+      - name: DIY 第一阶段 (feeds 前)
+        run: |
+          cd openwrt
+          bash $GITHUB_WORKSPACE/scripts/diy.sh pre ${{ matrix.device }}
+
+      - name: 更新安装 Feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: DIY 第二阶段 (feeds 后)
+        run: |
+          cd openwrt
+          bash $GITHUB_WORKSPACE/scripts/diy.sh post ${{ matrix.device }}
+
+      - name: 加载 .config
+        run: |
+          cp configs/${{ matrix.device }}.config openwrt/.config
+          cd openwrt && make defconfig
+
+      - name: 下载依赖包
+        run: |
+          cd openwrt
+          make download -j$(nproc) 2>&1 | grep -i error || true
+
+      - name: 编译固件
+        id: compile
+        run: |
+          cd openwrt
+          make -j$(nproc) || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
