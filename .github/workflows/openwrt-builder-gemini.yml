@@ -32,6 +32,7 @@ jobs:
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup
         sudo -E apt-get -qq update
         sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xz-utils zlib1g-dev lib32gcc-s1 libc6-dev-i386
+
         sudo -E apt-get -qq autoremove --purge
         sudo -E apt-get -qq clean
         sudo timedatectl set-timezone "${{ env.TZ }}"
@@ -53,11 +54,11 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-openwrt-${{ matrix.device }}-
 
-    - name: Load Custom Feeds & Packages
+    - name: Load Custom Feeds (Pre)
       run: |
         chmod +x scripts/diy-script.sh
         cd openwrt
-        ../scripts/diy-script.sh ${{ matrix.device }}
+        ../scripts/diy-script.sh pre ${{ matrix.device }}
 
     - name: Update & Install Feeds
       run: |
@@ -65,7 +66,7 @@ jobs:
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Load Custom Configuration
+    - name: Load Custom Configuration & Packages (Post)
       run: |
         if [ -f configs/${{ matrix.device }}.config ]; then
           cp configs/${{ matrix.device }}.config openwrt/.config
@@ -73,6 +74,7 @@ jobs:
           echo "Error: configs/${{ matrix.device }}.config not found!" && exit 1
         fi
         cd openwrt
+        ../scripts/diy-script.sh post ${{ matrix.device }}
         # 配置 ccache 环境变量以利用缓存
         echo "CONFIG_CCACHE=y" >> .config
         echo "CONFIG_CCACHE_DIR=\"$PWD/.ccache\"" >> .config
@@ -144,13 +146,31 @@ jobs:
     - name: Dynamic Generate Release Body
       id: dynamic_body
       run: |
-        BODY_TXT="## 🤖 自动化编译成功！\n基于官方分支定制的现代化 OpenWrt 固件。\n\n### 📌 共同固件信息\n* **默认管理 IP**: \`10.1.1.1\`\n* **编译时间**: ${{ needs.build.outputs.release_tag }}\n\n---\n\n### 📱 机型专属说明\n"
+        # ── 🦾 核心黑科技：全自动分析组件函数 ──────────────────
+        get_plugins() {
+          local cfg="./release_assets/$1.config"
+          if [ -f "$cfg" ]; then
+            # 抓取真正等于 y 的 luci 应用和主题，并剥离 CONFIG_PACKAGE_ 前缀
+            grep -E "^CONFIG_PACKAGE_luci-(app|theme)-" "$cfg" | grep "=y" | sed -E 's/CONFIG_PACKAGE_//;s/=y//' | sort | paste -sd ',' - | sed 's/,/, /g'
+          else
+            echo "未检测到该机型配置文件"
+          fi
+        }
+
+        PLUGINS_360=$(get_plugins "360v6")
+        PLUGINS_AX=$(get_plugins "ax6600")
+
+        # ── 📝 开始构建动态 Release 说明文案 ──────────────────
+        BODY_TXT="## 🤖 自动化编译成功！\n基于官方分支定制的现代化 OpenWrt 固件。\n\n### 📌 共同固件信息\n* **默认管理 IP**: \`10.1.1.1\`\n* **编译时间**: ${{ needs.build.outputs.release_tag }}\n\n---\n\n### 📱 机型专属插件检测报告（100% 真实生成）\n"
+        
         if ls ./release_assets/360v6* >/dev/null 2>&1; then
-          BODY_TXT="${BODY_TXT}#### 🟥 360 v6\n* **核心插件**: OpenClash, HomeProxy, DDNS-Go, Aria2, Aurora 极光主题。\n* **特殊说明**: 纯净无线固件，无额外硬件驱动。\n\n"
+          BODY_TXT="${BODY_TXT}#### 🟥 360 v6\n* **本次实际打包插件**: \`${PLUGINS_360}\`\n* **硬件说明**: 纯净无线固件，无额外硬件驱动。\n\n"
         fi
+        
         if ls ./release_assets/ax6600* >/dev/null 2>&1; then
-          BODY_TXT="${BODY_TXT}#### 🟦 京东云雅典娜 (AX6600)\n* **核心插件**: OpenClash, HomeProxy, DDNS-Go, Aria2, Aurora 极光主题、**luci-app-athena-led**。\n* **内置驱动**: 京东云雅典娜 LED 屏幕控制驱动。\n"
+          BODY_TXT="${BODY_TXT}#### 🟦 京东云雅典娜 (AX6600)\n* **本次实际打包插件**: \`${PLUGINS_AX}\`\n* **硬件说明**: 已内置京东云雅典娜 LED 屏幕控制及相关特定驱动。\n"
         fi
+        
         echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
         echo -e "$BODY_TXT" >> $GITHUB_ENV
         echo "EOF" >> $GITHUB_ENV
