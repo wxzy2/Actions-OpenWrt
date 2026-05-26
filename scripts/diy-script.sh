@@ -57,7 +57,7 @@ post() {
 
   # ── 5. 安全的清理逻辑（绝不盲删 INCLUDE） ────────────────
   echo "正在执行源码安全清理..."
-  # 移除垃圾组件（只删明确不需要的文件夹，绝不在 .config 里盲删包含 INCLUDE_ 的行）
+  # 移除垃圾组件
   find package feeds -type d -name "luci-app-attendedsysupgrade" -exec rm -rf {} + 2>/dev/null || true
   find package feeds -type d -name "*xray*" -exec rm -rf {} + 2>/dev/null || true
   find package feeds -type f -name "Makefile" -exec grep -l "xray" {} \; | xargs -I {} dirname {} | xargs rm -rf 2>/dev/null || true
