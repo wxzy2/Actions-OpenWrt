@@ -63,7 +63,7 @@ post() {
   find package feeds -type f -name "Makefile" -exec grep -l "xray" {} \; | xargs -I {} dirname {} | xargs rm -rf 2>/dev/null || true
 
   # 仅仅移除明确不需要的 passwall 残留配置项
-  sed -i '/CONFIG_PACKAGE_luci-app-passwall/d' openwrt/.config 2>/dev/null || true
+  sed -i '/CONFIG_PACKAGE_luci-app-passwall/d' .config 2>/dev/null || true
 }
 
 case "$STAGE" in
