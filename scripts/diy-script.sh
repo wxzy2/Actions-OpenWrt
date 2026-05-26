@@ -17,10 +17,10 @@ pre() {
 }
 
 post() {
-  # ── 1. 强制替换为 openlist2 官方要求的 Golang 24.x 版本 ──
-  echo "正在替换兼容的 Golang 24.x 版本..."
+  # ── 1. 强制替换为 openlist2 官方要求的 Golang 25.x 版本 ──
+  echo "正在替换兼容的 Golang 25.x 版本..."
   rm -rf feeds/packages/lang/golang 2>/dev/null || true
-  git clone --depth=1 -b 24.x \
+  git clone --depth=1 -b 25.x \
     https://github.com/sbwml/packages_lang_golang \
     feeds/packages/lang/golang
 
