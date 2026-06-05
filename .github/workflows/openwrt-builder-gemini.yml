@@ -8,7 +8,6 @@ env:
   REPO_URL: https://github.com/VIKINGYFY/immortalwrt
   REPO_BRANCH: main
   TZ: Asia/Shanghai
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build:
@@ -23,116 +22,115 @@ jobs:
       release_tag: ${{ steps.tag.outputs.release_tag }}
 
     steps:
-    - name: 检出本仓库
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
 
-    - name: 初始化编译环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        echo "正在清理磁盘空间..."
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup
-        echo "正在安装编译依赖包..."
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano p7zip p7zip-full patch pkgconf python3 python3-pip qemu-utils rsync scons squashfs-tools subversion swig texinfo u-boot-tools upx-ucl unzip xz-utils zlib1g-dev lib32gcc-s1 libc6-dev-i386
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo timedatectl set-timezone "${{ env.TZ }}"
-        echo "环境初始化完成 。"
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup
+          sudo -E apt-get -qq update
+          sudo -E apt-get -qq install -y \
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
+            gettext gcc-multilib g++-multilib git gnutls-dev gperf haveged help2man intltool \
+            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
+            libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build \
+            p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons squashfs-tools subversion swig \
+            texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+          sudo -E apt-get -qq autoremove --purge
+          sudo -E apt-get -qq clean
+          sudo timedatectl set-timezone "${{ env.TZ }}"
 
-    - name: 克隆源码
-      run: |
-        echo "正在克隆 ImmortalWrt 源码..."
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
-        cd openwrt
-        echo "ROOT_DIR=$PWD" >> $GITHUB_ENV
+      - name: Clone source code
+        run: |
+          git clone $REPO_URL -b $REPO_BRANCH openwrt
+          cd openwrt
+          echo "ROOT_DIR=$PWD" >> $GITHUB_ENV
 
-    - name: 开启编译缓存 (Ccache & DL)
-      uses: actions/cache@v4
-      with:
-        path: |
-          openwrt/dl
-          openwrt/.ccache
-        key: ${{ runner.os }}-openwrt-${{ matrix.device }}-${{ hashFiles('configs/', 'scripts/') }}
-        restore-keys: |
-          ${{ runner.os }}-openwrt-${{ matrix.device }}-
+      # ================= ⚡ 核心加速：开启 Ccache 缓存 ⚡ =================
+      - name: Cache Build Objects
+        uses: actions/cache@v4.2.3
+        with:
+          path: |
+            openwrt/dl
+            openwrt/.ccache
+          key: ${{ runner.os }}-openwrt-${{ matrix.device }}-${{ hashFiles('configs/', 'scripts/') }}
+          restore-keys: |
+            ${{ runner.os }}-openwrt-${{ matrix.device }}-
 
-    - name: 加载自定义 Feeds (Pre)
-      run: |
-        chmod +x scripts/diy-script.sh
-        cd openwrt
-        ../scripts/diy-script.sh pre ${{ matrix.device }}
+      - name: Load Custom Feeds (Pre)
+        run: |
+          chmod +x scripts/diy-script.sh
+          cd openwrt
+          ../scripts/diy-script.sh pre ${{ matrix.device }}
 
-    - name: 更新并安装 Feeds
-      run: |
-        cd openwrt
-        echo "正在更新 Feeds..."
-        ./scripts/feeds update -a
-        echo "正在安装 Feeds..."
-        ./scripts/feeds install -a
+      - name: Update & Install Feeds
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-    - name: 加载自定义配置与插件 (Post)
-      run: |
-        echo "正在加载机型配置文件: configs/${{ matrix.device }}.config"
-        if [ -f configs/${{ matrix.device }}.config ]; then
-          cp configs/${{ matrix.device }}.config openwrt/.config
-        else
-          echo "错误: 未找到配置文件 configs/${{ matrix.device }}.config" && exit 1
-        fi
-        cd openwrt
-        ../scripts/diy-script.sh post ${{ matrix.device }}
-        # 配置 ccache 环境变量以利用缓存
-        echo "正在配置编译加速缓存..."
-        echo "CONFIG_CCACHE=y" >> .config
-        echo "CONFIG_CCACHE_DIR=\"$PWD/.ccache\"" >> .config
-        echo "正在生成最终编译配置 (.config)..."
-        make defconfig
+      - name: Load Custom Configuration & Packages (Post)
+        run: |
+          if [ -f configs/${{ matrix.device }}.config ]; then
+            cp configs/${{ matrix.device }}.config openwrt/.config
+          else
+            echo "Error: configs/${{ matrix.device }}.config not found!" && exit 1
+          fi
+          cd openwrt
+          ../scripts/diy-script.sh post ${{ matrix.device }}
+          # 配置 ccache 环境变量以利用缓存
+          echo "CONFIG_CCACHE=y" >> .config
+          echo "CONFIG_CCACHE_DIR=\"$PWD/.ccache\"" >> .config
+          make defconfig
 
-    - name: 下载依赖软件包 (Download)
-      id: package
-      run: |
-        cd openwrt
-        echo "正在下载软件包依赖..."
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
+      - name: Download package
+        id: package
+        run: |
+          cd openwrt
+          make download -j8
+          find dl -size -1024c -exec ls -l {} \;
+          find dl -size -1024c -exec rm -f {} \;
 
-    - name: 编译固件 (Compile)
-      id: compile
-      run: |
-        cd openwrt
-        echo "正在开始编译固件，使用 $(nproc) 线程..."
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
+      - name: Compile the firmware
+        id: compile
+        run: |
+          cd openwrt
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || make -j1 || make -j1 V=s
+          echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 生成 Release 标签
-      id: tag
-      if: steps.compile.outputs.status == 'success'
-      run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        echo "status=success" >> $GITHUB_OUTPUT
+      - name: Generate Release Tag
+        id: tag
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+          echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 整理固件文件
-      id: organize
-      if: steps.compile.outputs.status == 'success'
-      run: |
-        echo "正在整理待发布的固件文件..."
-        mkdir -p firmware_release
-        find openwrt/bin/targets/ -type f -name "*sysupgrade.bin" -o -name "*factory.bin" -o -name "*initramfs-kernel.bin" | while read -r file; do
-          filename=$(basename "$file")
-          cp "$file" "firmware_release/${{ matrix.device }}-$filename"
-        done
-        if [ -f openwrt/.config ]; then
-          cp openwrt/.config "firmware_release/${{ matrix.device }}.config"
-        fi
-        echo "status=success" >> $GITHUB_OUTPUT
+      - name: Organize files
+        id: organize
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          mkdir -p firmware_release
+          find openwrt/bin/targets/ -type f \( -name "*sysupgrade.bin" -o -name "*factory.bin" -o -name "*initramfs-kernel.bin" \) | while read -r file; do
+            filename=$(basename "$file")
+            cp "$file" "firmware_release/${{ matrix.device }}-$filename"
+          done
+          if [ -f openwrt/.config ]; then
+            cp openwrt/.config "firmware_release/${{ matrix.device }}.config"
+          fi
+          echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: 上传固件至 Artifacts
-      uses: actions/upload-artifact@v4
-      if: steps.organize.outputs.status == 'success'
-      with:
-        name: OpenWrt_firmware_${{ matrix.device }}
-        path: firmware_release/*
+      - name: Upload firmware to Artifacts
+        uses: actions/upload-artifact@v4
+        if: steps.organize.outputs.status == 'success'
+        with:
+          name: OpenWrt_firmware_${{ matrix.device }}
+          path: firmware_release/*
 
   release:
     runs-on: ubuntu-24.04
@@ -141,56 +139,56 @@ jobs:
     permissions:
       contents: write
     steps:
-    - name: 下载所有编译产物
-      uses: actions/download-artifact@v4
-      with:
-        path: ./downloaded_artifacts
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./downloaded_artifacts
 
-    - name: 准备发布资源
-      run: |
-        mkdir -p release_assets
-        find ./downloaded_artifacts -type f -exec cp {} ./release_assets/ \;
-        echo "==== 待上传资源列表 ===="
-        ls -lh ./release_assets/
+      - name: Flatten Artifacts Directory
+        run: |
+          mkdir -p release_assets
+          find ./downloaded_artifacts -type f -exec cp {} ./release_assets/ \;
+          echo "==== 准备上传的固件及配置文件列表 ===="
+          ls -lh ./release_assets/
 
-    - name: 动态生成 Release 说明
-      id: dynamic_body
-      run: |
-        get_plugins() {
-          local cfg="./release_assets/$1.config"
-          if [ -f "$cfg" ]; then
-            grep -E "^CONFIG_PACKAGE_luci-(app|theme)-" "$cfg" | grep "=y" | sed -E 's/CONFIG_PACKAGE_//;s/=y//' | sort | paste -sd ',' - | sed 's/,/, /g'
-          else
-            echo "未检测到配置文件"
+      - name: Dynamic Generate Release Body
+        id: dynamic_body
+        run: |
+          # ── 🦾 核心黑科技：全自动分析组件函数 ──────────────────
+          get_plugins() {
+            local cfg="./release_assets/$1.config"
+            if [ -f "$cfg" ]; then
+              # 抓取真正等于 y 的 luci 应用和主题，并剥离 CONFIG_PACKAGE_ 前缀
+              grep -E "^CONFIG_PACKAGE_luci-(app|theme)-" "$cfg" | grep "=y" | sed -E 's/CONFIG_PACKAGE_//;s/=y//' | sort | paste -sd ',' - | sed 's/,/, /g'
+            else
+              echo "未检测到该机型配置文件"
+            fi
+          }
+
+          PLUGINS_360=$(get_plugins "360v6")
+          PLUGINS_AX=$(get_plugins "ax6600")
+
+          # ── 📝 开始构建动态 Release 说明文案 ──────────────────
+          BODY_TXT="## 🤖 自动化编译成功！\n基于官方分支定制的现代化 OpenWrt 固件。\n\n### 📌 共同固件信息\n* **默认管理 IP**: \`10.1.1.1\`\n* **编译时间**: ${{ needs.build.outputs.release_tag }}\n\n---\n\n### 📱 机型专属插件检测报告（100% 真实生成）\n"
+
+          if ls ./release_assets/360v6* >/dev/null 2>&1; then
+            BODY_TXT="${BODY_TXT}#### 🟥 360 v6\n* **本次实际打包插件**: \`${PLUGINS_360}\`\n* **硬件说明**: 纯净无线固件，无额外硬件驱动。\n\n"
           fi
-        }
-        PLUGINS_360=$(get_plugins "360v6")
-        PLUGINS_AX=$(get_plugins "ax6600")
-        BODY_TXT="## 🤖 自动化编译成功！\n\n### 📌 共同固件信息\n* **默认管理 IP**: \`10.1.1.1\`\n* **默认密码**: \`无\`\n* **编译时间**: ${{ needs.build.outputs.release_tag }}\n\n---\n\n### 📱 机型插件报告\n"
-        if ls ./release_assets/360v6* >/dev/null 2>&1; then
-          BODY_TXT="${BODY_TXT}#### 🟥 360 v6\n* **已打包插件**: \`${PLUGINS_360}\`\n\n"
-        fi
-        if ls ./release_assets/ax6600* >/dev/null 2>&1; then
-          BODY_TXT="${BODY_TXT}#### 🟦 京东云雅典娜 (AX6600)\n* **已打包插件**: \`${PLUGINS_AX}\`\n"
-        fi
-        echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
-        echo -e "$BODY_TXT" >> $GITHUB_ENV
-        echo "EOF" >> $GITHUB_ENV
 
-    - name: 发布至 GitHub Release
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: ${{ needs.build.outputs.release_tag }}
-        name: OpenWrt 定制固件发布 [${{ needs.build.outputs.release_tag }}]
-        body: ${{ env.RELEASE_BODY }}
-        draft: false
-        prerelease: false
-        files: ./release_assets/*
+          if ls ./release_assets/ax6600* >/dev/null 2>&1; then
+            BODY_TXT="${BODY_TXT}#### 🟦 京东云雅典娜 (AX6600)\n* **本次实际打包插件**: \`${PLUGINS_AX}\`\n* **硬件说明**: 已内置京东云雅典娜 LED 屏幕控制及相关特定驱动。\n"
+          fi
 
-    - name: 清理旧的 Releases (保留最新 20 个)
-      uses: dev-drprasad/delete-older-releases@v0.3.3
-      with:
-        keep_latest: 20
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "RELEASE_BODY<<EOF" >> $GITHUB_ENV
+          echo -e "$BODY_TXT" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.release_tag }}
+          name: OpenWrt 定制固件发布 [${{ needs.build.outputs.release_tag }}]
+          body: ${{ env.RELEASE_BODY }}
+          draft: false
+          prerelease: false
+          files: ./release_assets/*
